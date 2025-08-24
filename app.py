@@ -10,11 +10,82 @@ import requests # Using requests for the Gemini API call
 
 # Set page configuration
 st.set_page_config(
-    page_title="AI Job Application Tracker",
-    page_icon="🤖",
+    page_title="Automated Application Tracker",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+# --- Custom CSS for Styling ---
+def load_css():
+    """Injects custom CSS for styling the app."""
+    st.markdown("""
+        <style>
+            h1 {
+                text-align: center;
+                color: #2a2a2a;
+            }
+
+            /* --- Widget Styling --- */
+            .st-emotion-cache-10trblm { /* Main app container */
+                padding: 2rem 3rem;
+            }
+
+            /* Make the text area larger */
+            .stTextArea textarea {
+                min-height: 100px; /* Set a minimum height for multiple lines */
+                font-size: 1.1rem;
+                border-radius: 4px; /* Sharper corners for classic look */
+                border: 1px solid #ccc;
+            }
+
+            /* --- Classic Button Styling --- */
+            .stButton > button {
+                border-radius: 4px;
+                font-weight: 500;
+                padding: 0.75rem 1rem;
+                border: 1px solid #aaa;
+                background-color: #f0f0f0; /* Light grey background */
+                color: #333;
+                transition: all 0.2s ease-in-out;
+            }
+            
+            .stButton > button:hover {
+                background-color: #e0e0e0;
+                border-color: #888;
+            }
+            
+            .stButton > button:focus {
+                box-shadow: 0 0 0 2px white, 0 0 0 4px #aaa; /* Classic focus ring */
+            }
+
+            /* --- Custom Text Notification Styling --- */
+            .notification-text {
+                font-style: italic;
+                color: #555;
+                text-align: center;
+                margin-top: 1rem;
+            }
+            
+            /* --- Dataframe Styling --- */
+            .stDataFrame {
+                border-radius: 8px;
+                max-height: 300px; /* Set max height for approx 4-5 rows */
+                overflow-y: auto; /* Enable vertical scrolling */
+            }
+            
+            /* --- Custom Styling for Empty Sheet Message --- */
+            .empty-sheet-message {
+                text-align: center;
+                color: #888; /* Light grey text */
+                font-style: italic;
+                padding: 2rem;
+                border: 1px dashed #ddd; /* Dashed border */
+                border-radius: 8px;
+            }
+
+        </style>
+    """, unsafe_allow_html=True)
+
 
 # --- Google Sheets & Gemini API Setup ---
 
@@ -29,12 +100,6 @@ def connect_to_gsheet():
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
         ]
-        # Load credentials from Streamlit secrets
-        # IMPORTANT: Your secrets.toml file should look like this:
-        # [gcp_service_account]
-        # type = "service_account"
-        # project_id = "your-project-id"
-        # ... (all the other keys from your JSON file) ...
         creds_dict = st.secrets["gcp_service_account"]
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
@@ -49,24 +114,32 @@ def parse_prompt_with_gemini(prompt):
     """
     Sends the user's prompt to the Gemini API to extract structured data.
     """
-    # IMPORTANT: You don't need to provide an API key if using a supported model.
-    # The environment will handle authentication automatically.
-    api_key = "" 
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+    except KeyError:
+        st.error("GEMINI_API_KEY not found in secrets.toml. Please add it.")
+        return None
+        
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key={api_key}"
 
     # The detailed instruction for the model
     system_prompt = """
     You are an intelligent assistant for a job application tracker. 
-    Your task is to extract structured information from the user's text.
-    Analyze the text to determine if it's a new application ('CREATE') or an update to an existing one ('UPDATE').
-    Extract the company name, contact (email or platform like LinkedIn), the application status, and any relevant notes.
+    Your task is to extract structured information from the user's text and respond ONLY with a valid JSON object.
+    Use the following keys in your JSON response: "action", "company", "job_title", "contact", "status", "notes", "link", "salary", "location", "next_step_date", "recruiter_contact".
 
-    - For 'status', use one of these predefined categories: 'Applied', 'Assessment', 'Interview Scheduled', 'Offer Received', 'Rejected', 'Followed Up', 'Withdrew'.
-    - If the user mentions sending an application, the status is 'Applied'.
-    - If the user mentions a response, interview, or next steps, the action is 'UPDATE'.
+    - Analyze the text to determine if it's a new application ('CREATE') or an update to an existing one ('UPDATE') for the "action" key.
+    - Extract the company name for the "company" key.
+    - Extract the job title for the "job_title" key.
+    - Extract the contact (email or platform like LinkedIn) for the "contact" key.
+    - Extract the application status for the "status" key. Use one of these predefined categories: 'Applied', 'Assessment', 'Interview Scheduled', 'Offer Received', 'Rejected', 'Followed Up', 'Withdrew'.
+    - Extract any other relevant information as "notes".
+    - Extract any URLs for the "link" key.
+    - Extract salary information for the "salary" key.
+    - Extract the location (e.g., Remote, Hybrid, City) for the "location" key.
+    - Extract any dates for future events for the "next_step_date" key.
+    - Extract any recruiter names or contacts for the "recruiter_contact" key.
     - If a field isn't mentioned, set its value to an empty string "".
-
-    Respond ONLY with a JSON object.
     """
 
     # Construct the payload for the API
@@ -105,57 +178,19 @@ def parse_prompt_with_gemini(prompt):
 # --- Main Application Logic ---
 
 def main():
-    st.title("📝 AI-Powered Job Application Tracker")
-    st.markdown("Simply type what you did, and the AI will update your Google Sheet. Try things like: *'Sent my application to Stripe via their website'* or *'Heard back from Google, phone screen next Tuesday at 2pm'*.")
-    st.markdown("---")
+    load_css() # Apply the custom styles
 
-    # --- Setup Instructions Expander ---
-    with st.expander("🔑 First-Time Setup Instructions (Click to Expand)"):
-        st.markdown("""
-        To use this app, you need to connect it to your Google Sheet. This requires a one-time setup:
-
-        **1. Create a Google Sheet:**
-           - Make a new Google Sheet.
-           - Name the first sheet (tab) `Applications`.
-           - Create the following headers in the first row: `Company`, `Contact`, `Date Applied`, `Status`, `Notes`, `Last Updated`.
-
-        **2. Set up Google Cloud Service Account:**
-           - Go to the [Google Cloud Console](https://console.cloud.google.com/).
-           - Create a new project.
-           - Enable the **Google Sheets API** and **Google Drive API** for your project.
-           - Create a **Service Account**. Go to `IAM & Admin` > `Service Accounts`.
-           - Create a key for the service account (choose JSON format). A JSON file will be downloaded. This contains your credentials.
-
-        **3. Share Your Google Sheet:**
-           - Open the JSON file you downloaded. Find the `client_email` address.
-           - In your Google Sheet, click the "Share" button.
-           - Paste the `client_email` and give it "Editor" permissions.
-
-        **4. Add Credentials to Streamlit Secrets:**
-           - In your Streamlit project folder, create a new folder called `.streamlit`.
-           - Inside `.streamlit`, create a file named `secrets.toml`.
-           - Copy the contents of the downloaded JSON file and paste it into `secrets.toml` under the heading `[gcp_service_account]`.
-           
-           Your `secrets.toml` file should look like this:
-           ```toml
-           [gcp_service_account]
-           type = "service_account"
-           project_id = "your-gcp-project-id"
-           private_key_id = "your-private-key-id"
-           private_key = "-----BEGIN PRIVATE KEY-----\\n...your-private-key...\\n-----END PRIVATE KEY-----\\n"
-           client_email = "your-service-account-email@your-project-id.iam.gserviceaccount.com"
-           client_id = "your-client-id"
-           # ... and so on for all keys in the JSON file.
-           ```
-        **5. Add Google Sheet Name to Secrets:**
-            - Add the exact name of your Google Sheet file to your `secrets.toml`:
-            ```toml
-            GSHEET_NAME = "Your Google Sheet File Name"
-            ```
-        """)
-
-    # --- Main Interface ---
+    st.title("Automated Application Tracker")
     
+    # --- Centered Main Content ---
+    main_col1, main_col2, main_col3 = st.columns([1, 2, 1])
+    with main_col2:
+        # --- User Input (Centered and Larger) ---
+        prompt = st.text_area("Enter your update here...", placeholder="e.g., Applied to Vercel for the frontend engineer role...", label_visibility="collapsed")
+        update_button = st.button("Update", use_container_width=True)
+        # Placeholder for notifications
+        notification_placeholder = st.empty()
+
     # Connect to Google Sheets
     client = connect_to_gsheet()
 
@@ -165,33 +200,28 @@ def main():
             spreadsheet = client.open(GSHEET_NAME)
             worksheet = spreadsheet.worksheet("Applications")
         except gspread.exceptions.SpreadsheetNotFound:
-            st.error(f"Spreadsheet named '{st.secrets.get('GSHEET_NAME', 'GSHEET_NAME_not_found')}' not found. Please check the Gsheet name in your secrets and ensure it's shared with the service account.")
+            notification_placeholder.markdown(f"<p class='notification-text' style='color: #D8000C;'>Spreadsheet named '{st.secrets.get('GSHEET_NAME', 'GSHEET_NAME_not_found')}' not found.</p>", unsafe_allow_html=True)
             return
         except gspread.exceptions.WorksheetNotFound:
-            st.error("Worksheet named 'Applications' not found. Please make sure the first tab in your sheet is named exactly that.")
+            notification_placeholder.markdown("<p class='notification-text' style='color: #D8000C;'>Worksheet named 'Applications' not found.</p>", unsafe_allow_html=True)
             return
         except Exception as e:
-            st.error(f"An error occurred while opening the sheet: {e}")
+            notification_placeholder.markdown(f"<p class='notification-text' style='color: #D8000C;'>An error occurred while opening the sheet: {e}</p>", unsafe_allow_html=True)
             return
 
-        # --- User Input ---
-        prompt = st.text_input("What's your update?", placeholder="e.g., Applied to Vercel for the frontend engineer role...")
-
-        if st.button("Update Sheet", type="primary"):
+        if update_button:
             if prompt:
-                with st.spinner("🤖 AI is processing your request..."):
+                with st.spinner("AI is processing your request..."):
                     # 1. Parse the prompt with Gemini
                     parsed_data = parse_prompt_with_gemini(prompt)
 
                     if parsed_data:
-                        st.success("AI analysis complete!")
-                        st.json(parsed_data) # Show the user what the AI understood
-
-                        company = parsed_data.get("company_name", "").strip()
+                        # Check for 'company' key first, then fall back to 'company_name'
+                        company = (parsed_data.get("company", "") or parsed_data.get("company_name", "")).strip()
                         action = parsed_data.get("action", "").upper()
 
                         if not company:
-                            st.warning("AI could not identify a company name. Please be more specific.")
+                            notification_placeholder.markdown("<p class='notification-text' style='color: #9F6000;'>AI could not identify a company name. Please be more specific.</p>", unsafe_allow_html=True)
                             return
 
                         # 2. Perform the action (CREATE or UPDATE)
@@ -200,54 +230,67 @@ def main():
                             cell_list = worksheet.findall(company, in_column=1, case_sensitive=False)
                             
                             if action == "CREATE" and not cell_list:
-                                st.info(f"Adding new entry for **{company}**...")
-                                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                notification_placeholder.markdown(f"<p class='notification-text'>Adding new entry for **{company}**...</p>", unsafe_allow_html=True)
+                                now = datetime.now().strftime("%Y-m-%d %H:%M:%S")
                                 new_row = [
                                     company,
+                                    parsed_data.get("job_title", ""),
                                     parsed_data.get("contact", ""),
                                     now.split(" ")[0], # Date Applied
                                     parsed_data.get("status", "Applied"),
                                     parsed_data.get("notes", ""),
+                                    parsed_data.get("link", ""),
+                                    parsed_data.get("salary", ""),
+                                    parsed_data.get("location", ""),
+                                    parsed_data.get("next_step_date", ""),
+                                    parsed_data.get("recruiter_contact", ""),
                                     now # Last Updated
                                 ]
                                 worksheet.append_row(new_row)
-                                st.success(f"Successfully added **{company}** to your sheet!")
+                                notification_placeholder.markdown(f"<p class='notification-text' style='color: #4F8A10;'>Successfully added **{company}** to your sheet!</p>", unsafe_allow_html=True)
 
                             elif action == "UPDATE" or cell_list:
                                 if not cell_list:
-                                    st.warning(f"Could not find **{company}** to update. Try adding it first.")
+                                    notification_placeholder.markdown(f"<p class='notification-text' style='color: #9F6000;'>Could not find **{company}** to update. Try adding it first.</p>", unsafe_allow_html=True)
                                     return
                                     
-                                st.info(f"Updating entry for **{company}**...")
+                                notification_placeholder.markdown(f"<p class='notification-text'>Updating entry for **{company}**...</p>", unsafe_allow_html=True)
                                 target_row = cell_list[0].row
                                 
                                 # Prepare updates, only changing what's new
                                 now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 updates = {
-                                    'D': parsed_data.get("status"), # Column D for Status
-                                    'E': parsed_data.get("notes"),   # Column E for Notes
-                                    'F': now                         # Column F for Last Updated
+                                    'B': parsed_data.get("job_title"),
+                                    'C': parsed_data.get("contact"),
+                                    'E': parsed_data.get("status"),
+                                    'F': parsed_data.get("notes"),
+                                    'G': parsed_data.get("link"),
+                                    'H': parsed_data.get("salary"),
+                                    'I': parsed_data.get("location"),
+                                    'J': parsed_data.get("next_step_date"),
+                                    'K': parsed_data.get("recruiter_contact"),
+                                    'L': now # Last Updated
                                 }
                                 
                                 for col_letter, value in updates.items():
                                     if value: # Only update if the AI provided a value
                                         worksheet.update(f"{col_letter}{target_row}", value)
 
-                                st.success(f"Successfully updated **{company}** in your sheet!")
+                                notification_placeholder.markdown(f"<p class='notification-text' style='color: #4F8A10;'>Successfully updated **{company}** in your sheet!</p>", unsafe_allow_html=True)
                             
                             else:
-                                st.error(f"Could not determine whether to create or update for {company}. The AI action was '{action}' and a sheet entry was {'found' if cell_list else 'not found'}.")
+                                notification_placeholder.markdown(f"<p class='notification-text' style='color: #D8000C;'>Could not determine whether to create or update for {company}.</p>", unsafe_allow_html=True)
 
 
                         except Exception as e:
-                            st.error(f"An error occurred while updating the sheet: {e}")
+                            notification_placeholder.markdown(f"<p class='notification-text' style='color: #D8000C;'>An error occurred while updating the sheet: {e}</p>", unsafe_allow_html=True)
 
             else:
-                st.warning("Please enter an update.")
-
-        # --- Display Sheet Data ---
+                notification_placeholder.markdown("<p class='notification-text' style='color: #9F6000;'>Please enter an update.</p>", unsafe_allow_html=True)
+        
         st.markdown("---")
-        st.subheader("📊 Your Application Dashboard")
+        # --- Display Sheet Data ---
+        st.subheader("Dashboard")
         try:
             with st.spinner("Fetching latest data from Google Sheets..."):
                 data = worksheet.get_all_records()
@@ -255,7 +298,7 @@ def main():
                     df = pd.DataFrame(data)
                     st.dataframe(df, use_container_width=True)
                 else:
-                    st.info("Your sheet is currently empty. Add your first application!")
+                    st.markdown("<p class='empty-sheet-message'>Your sheet is currently empty. Add your first application!</p>", unsafe_allow_html=True)
         except Exception as e:
             st.error(f"Could not fetch data from the sheet. {e}")
 
